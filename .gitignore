@@ -38,3 +38,6 @@ coverage/
 
 # Gói ZIP nguồn (bản gốc nằm trên Google Drive — xem docs/SOURCES.md)
 google_drive/
+
+# Gallery build (scripts/build_gallery.sh) — không commit
+.preview/

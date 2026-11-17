@@ -27,3 +27,16 @@ npm install && npm run dev
   trường `name` trong `package.json` (`onepiece-fpv-<tên>`) và bổ sung script `typecheck`.
 - Không có thư mục dùng chung: các dự án **cố tình độc lập** để có thể tách/nhân bản
   từng nhân vật mà không ảnh hưởng lẫn nhau.
+
+## Quan hệ với các nhánh
+
+Thư mục ở đây là **bản vendor để tra cứu**. Bản chính thức của mỗi nhân vật là nhánh Git
+cùng tên, nơi dự án nằm ở thư mục gốc:
+
+```bash
+git switch kizaru && npm install && npm run dev
+```
+
+Hai bên luôn đồng bộ nội dung — được kiểm bằng `git diff --quiet characters/<tên> <nhánh>`.
+Khi cập nhật, sửa trên nhánh nhân vật rồi chạy lại `./scripts/import_characters.sh`
+hoặc `./scripts/publish_branch.sh` để đồng bộ ngược lại.

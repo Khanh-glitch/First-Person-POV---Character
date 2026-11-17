@@ -29,7 +29,8 @@ Tổng cộng **41 tuyệt chiêu** trên 7 ứng dụng.
 ```
 .
 ├── README.md                 # Bạn đang đọc — danh mục & hướng dẫn chung
-├── characters/               # Danh mục dự án (trên nhánh main của bộ sưu tập)
+├── characters/               # Danh mục dự án — vendor cả 7 nhân vật
+│   ├── README.md             # ├─ bảng so sánh nhanh
 │   ├── boa-hancock/          # ├─ mỗi thư mục = 1 dự án độc lập, tự chạy được
 │   ├── captain-kid/
 │   ├── doflamingo/
@@ -37,16 +38,31 @@ Tổng cộng **41 tuyệt chiêu** trên 7 ứng dụng.
 │   ├── kizaru/
 │   ├── luffy/
 │   └── zoro/
+├── docs/
+│   └── SOURCES.md            # Truy vết ZIP nguồn → nhân vật → nhánh
+├── scripts/
+│   ├── import_characters.sh  # Dựng lại characters/ từ ZIP
+│   ├── publish_branch.sh     # Xuất 1 thư mục thành nhánh Git
+│   └── build_gallery.sh      # Build cả 7 + trang gallery xem trước
 └── .gitignore
 ```
 
-Trên nhánh `main` mỗi nhánh nhân vật được **vendor** vào `characters/<tên>` để tra cứu
-nhanh. Nguồn chính thức của từng nhân vật nằm ở **nhánh cùng tên**.
+**Mô hình nhánh:**
+
+| Nhánh | Nội dung | Dùng khi |
+|---|---|---|
+| `main` | Chỉ `README.md` ban đầu của kho | Mốc lịch sử chung |
+| `arena/…-character` (nhánh danh mục) | `characters/` + `docs/` + `scripts/` | Tra cứu, so sánh, quản lý tổng |
+| `boa-hancock` … `zoro` (7 nhánh) | **Chính dự án đó ở thư mục gốc** | Phát triển/chạy riêng 1 nhân vật |
+
+Mỗi nhánh nhân vật được tách từ `main` bằng `commit-tree` trên một cây thư mục độc lập,
+nên **không** mang theo `characters/`, `docs/` hay `scripts/` — clone nhánh `zoro` là có
+ngay một dự án Vite gọn gàng ở thư mục gốc.
 
 ```bash
-git branch -a                 # liệt kê toàn bộ nhánh nhân vật
-git switch zoro               # xem nhánh nhân vật
-git switch main               # quay lại danh mục
+git branch -a                 # liệt kê toàn bộ nhánh
+git switch zoro               # vào nhánh nhân vật (dự án ở gốc)
+git switch arena/c9d46f9a-first-person-pov-character   # về nhánh danh mục
 ```
 
 ---
@@ -75,6 +91,39 @@ npm run dev
 | `npm run build` | Build production → `dist/` (một file HTML duy nhất nhờ `vite-plugin-singlefile`) |
 | `npm run preview` | Xem trước bản build |
 | `npm run typecheck` | Kiểm tra kiểu TypeScript (`tsc --noEmit`) |
+
+---
+
+## Xem trước tất cả cùng lúc (gallery)
+
+```bash
+./scripts/build_gallery.sh          # build 7 dự án -> .preview/
+./scripts/build_gallery.sh --serve  # build rồi phục vụ tại http://0.0.0.0:8000
+```
+
+Gallery là một trang tĩnh liệt kê 7 nhân vật (kanji, Trái Ác Quỷ, số chiêu, dung lượng);
+mỗi thẻ mở ứng dụng tương ứng. Artwork của Zoro được copy lên `images/` ở gốc gallery vì
+dự án đó dùng đường dẫn tuyệt đối `/images/...`.
+
+---
+
+## Trạng thái kiểm chứng
+
+Toàn bộ 7 dự án đã được kiểm tra trong quá trình nhập liệu:
+
+| Nhân vật | `tsc --noEmit` | `vite build` | Bundle |
+|---|---|---|---|
+| boa-hancock | ✅ 0 lỗi | ✅ | 923 KB |
+| captain-kid | ✅ 0 lỗi | ✅ | 915 KB |
+| doflamingo | ✅ 0 lỗi | ✅ | 941 KB |
+| imu | ✅ 0 lỗi | ✅ | 872 KB |
+| kizaru | ✅ 0 lỗi | ✅ | 1 239 KB |
+| luffy | ✅ 0 lỗi | ✅ | 869 KB |
+| zoro | ✅ 0 lỗi | ✅ | 933 KB |
+
+Typecheck chạy ở chế độ `strict` của `tsconfig.json` gốc (có `noUnusedLocals` /
+`noUnusedParameters`), tức mã nguồn sạch cả về kiểu lẫn biến thừa. Gallery đã được phục
+vụ thử và cả 8 URL (trang chủ + 7 app) trả về HTTP 200 với đầy đủ nội dung.
 
 ---
 

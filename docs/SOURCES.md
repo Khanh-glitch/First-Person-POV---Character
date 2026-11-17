@@ -43,14 +43,24 @@ Không sửa file `.ts`/`.tsx`/`.css`/`.html` nào.
 
 ## Kiểm chứng
 
-Toàn bộ 7 dự án đã được cài đặt và build thành công:
+Toàn bộ 7 dự án đã được cài đặt, typecheck và build thành công:
 
-| Nhân vật | `npm run build` | Bundle (`dist/index.html`) |
-|---|---|---|
-| boa-hancock | ✅ | 923 KB |
-| captain-kid | ✅ | 915 KB |
-| doflamingo | ✅ | 941 KB |
-| imu | ✅ | 872 KB |
-| kizaru | ✅ | 1 239 KB |
-| luffy | ✅ | 869 KB |
-| zoro | ✅ | 933 KB |
+| Nhân vật | `tsc --noEmit` | `npm run build` | Bundle (`dist/index.html`) |
+|---|---|---|---|
+| boa-hancock | ✅ 0 lỗi | ✅ | 923 KB |
+| captain-kid | ✅ 0 lỗi | ✅ | 915 KB |
+| doflamingo | ✅ 0 lỗi | ✅ | 941 KB |
+| imu | ✅ 0 lỗi | ✅ | 872 KB |
+| kizaru | ✅ 0 lỗi | ✅ | 1 239 KB |
+| luffy | ✅ 0 lỗi | ✅ | 869 KB |
+| zoro | ✅ 0 lỗi | ✅ | 933 KB |
+
+Gallery (`scripts/build_gallery.sh`) đã được phục vụ thử: 8 URL (trang chủ + 7 app)
++ artwork Zoro đều trả về HTTP 200.
+
+## Lịch sử Git
+
+Mỗi nhánh nhân vật là **một commit duy nhất có cha là `4a3a8e0` (main)**, chứa đúng
+cây thư mục của dự án đó ở gốc (không kèm `characters/`, `docs/`, `scripts/`).
+Cây thư mục của mỗi nhánh đã được đối chiếu khớp tuyệt đối với
+`characters/<tên>` trên nhánh danh mục (`git diff --quiet` → không khác biệt).
