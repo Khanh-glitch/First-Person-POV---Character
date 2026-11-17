@@ -1,0 +1,168 @@
+@import "tailwindcss";
+
+@theme {
+  --font-jp: "Dela Gothic One", "Hiragino Sans", sans-serif;
+  --font-mincho: "Shippori Mincho B1", serif;
+  --font-bebas: "Bebas Neue", Impact, sans-serif;
+  --font-vn: "Be Vietnam Pro", system-ui, sans-serif;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0a0510;
+  font-family: var(--font-vn);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.sfx {
+  position: absolute;
+  font-family: var(--font-jp);
+  white-space: nowrap;
+  pointer-events: none;
+  paint-order: stroke fill;
+  -webkit-text-stroke: 0.14em #12040c;
+  text-shadow:
+    0 0 0.25em rgba(255, 60, 160, 0.55),
+    0.06em 0.08em 0 #12040c;
+  animation: sfxPop 1.25s cubic-bezier(0.2, 1.6, 0.3, 1) forwards;
+  letter-spacing: -0.02em;
+}
+@keyframes sfxPop {
+  0% {
+    transform: translate(-50%, -50%) rotate(var(--r)) scale(2.6);
+    opacity: 0;
+    filter: blur(6px);
+  }
+  12% {
+    transform: translate(-50%, -50%) rotate(var(--r)) scale(0.92);
+    opacity: 1;
+    filter: blur(0);
+  }
+  20% {
+    transform: translate(-50%, -50%) rotate(var(--r)) scale(1.05);
+  }
+  75% {
+    transform: translate(-50%, -52%) rotate(var(--r)) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -60%) rotate(var(--r)) scale(1.08);
+    opacity: 0;
+  }
+}
+
+.title-card {
+  animation: titleOut 0.5s ease-in 2.6s forwards;
+}
+@keyframes titleOut {
+  to {
+    opacity: 0;
+    transform: translateX(-4%) skewX(-6deg);
+    filter: blur(8px);
+  }
+}
+.title-band {
+  animation: bandIn 0.45s cubic-bezier(0.7, 0, 0.2, 1) forwards;
+  transform-origin: left center;
+  transform: scaleX(0) skewX(-14deg);
+}
+@keyframes bandIn {
+  to {
+    transform: scaleX(1) skewX(-14deg);
+  }
+}
+.title-kanji {
+  animation: kanjiIn 0.6s cubic-bezier(0.2, 1.4, 0.3, 1) 0.12s both;
+}
+@keyframes kanjiIn {
+  from {
+    opacity: 0;
+    transform: scale(1.8) translateX(-8%);
+    filter: blur(10px);
+    letter-spacing: 0.4em;
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+.title-sub {
+  animation: subIn 0.5s ease-out 0.35s both;
+}
+@keyframes subIn {
+  from {
+    opacity: 0;
+    transform: translateX(-30px);
+    letter-spacing: 0.6em;
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.intro-fade {
+  animation: introIn 1.4s ease-out both;
+}
+@keyframes introIn {
+  from {
+    opacity: 0;
+    transform: scale(1.06);
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+.shimmer-text {
+  background: linear-gradient(100deg, #ff4fa3 0%, #ffd1ec 30%, #ffffff 45%, #ff4fa3 60%, #b0207a 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 4s linear infinite;
+}
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -150% 0;
+  }
+}
+
+.thread-line {
+  position: absolute;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent, rgba(255, 220, 240, 0.8), transparent);
+  animation: threadFall linear infinite;
+}
+@keyframes threadFall {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(100vh);
+  }
+}
+
+.card-glow {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset,
+    0 10px 30px -10px rgba(0, 0, 0, 0.7);
+}
+.card-active {
+  box-shadow:
+    0 0 0 1px var(--c) inset,
+    0 0 28px -4px var(--c),
+    0 10px 30px -10px rgba(0, 0, 0, 0.7);
+}
