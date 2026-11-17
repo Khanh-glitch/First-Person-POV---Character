@@ -111,11 +111,16 @@ mọi nhân vật khác — đấu vòng tròn để trung hoà ảnh hưởng c
 Kết quả hiện tại (dán trong `src/engine/combat.ts`):
 
 ```
-'boa-hancock': 1.24650    'kizaru':   1.03027
-'captain-kid': 1.01157    'luffy':    0.99087
-'doflamingo':  0.79964    'zoro':     1.02585
-'imu':         0.99967
+'boa-hancock': 12.4650    'kizaru':   10.3027
+'captain-kid':  9.7210    'luffy':     9.9087
+'doflamingo':   8.1184    'zoro':     10.2585
+'imu':          9.7068
 ```
+
+**Lưu ý về độ lớn tuyệt đối**: bộ giải chỉ cố định *tỉ lệ* giữa các nhân
+vật, không cố định độ lớn. Sau khi giải xong, phải kiểm tra DPS có nằm
+quanh 30–45 không; nếu thấp hơn (trận sẽ kéo dài hàng phút) thì nhân toàn
+bộ K lên cùng một số. Hiện tại đã nhân 10× để trận về ~20 giây.
 
 Khi dữ liệu chiêu thay đổi, **chạy lại `npm run solve`** rồi dán khối
 `SOLVED_K` mới. Đừng sửa tay.
@@ -208,19 +213,22 @@ thì đổi chiến thuật theo tình huống). Vì vậy nó không nên chặ
 ### Kết quả hiện tại
 
 ```
-Boa Hancock    40.0 avgDPS   burst 189
-Captain Kid    40.0           burst 119
-Doflamingo     40.0           burst 101
-Imu            40.0           burst 183
-Kizaru         40.0           burst 175
-Luffy          40.0           burst 133
-Zoro           40.0           burst 131
+Boa Hancock   40.5 avgDPS   burst 271
+Captain Kid   34.1           burst 181
+Doflamingo    38.7           burst 164
+Imu           28.7           burst 241
+Kizaru        35.4           burst 224
+Luffy         37.1           burst 200
+Zoro          37.5           burst 207
 
-chênh lệch DPS trung bình: 1.00×
+chênh lệch DPS trung bình: 1.41×
 chênh lệch DPS liên tục:   1.41×
-chiêu mạnh nhất: 189 (×1.14 = 215) < 1000 HP
-tỉ lệ thắng tổng thể: trải 55 điểm
+chiêu mạnh nhất: 271 (×1.23 khắc chế = 333) < 1000 HP
+tỉ lệ thắng tổng thể: trải 58 điểm
 ```
+
+(Nhóm 4b đang nằm sát ngưỡng 60 điểm — cần chạy lại `npm run solve` nếu
+chỉnh dữ liệu chiêu.)
 
 ---
 
