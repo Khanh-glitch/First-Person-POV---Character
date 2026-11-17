@@ -97,8 +97,27 @@ function buildKatana(bladeHex: string, wrapHex: string): THREE.Group {
   return root;
 }
 
+/**
+ * PRNG tất định (mulberry32).
+ *
+ * Rig dùng `Math.random()` để rải mảnh sắt vụn thì mỗi lần tải lại là một
+ * hình khác — có lần mảnh rơi ra ngoài khung hình, có lần tay lệch chỗ. Với
+ * seed cố định, rig LUÔN giống nhau, nên vừa đẹp vừa kiểm chứng được.
+ */
+function makeRng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 /** Cánh tay cơ khí từ sắt vụn (Captain Kid) */
 function buildScrapArm(): THREE.Group {
+  const rng = makeRng(0x51a7);
   const root = new THREE.Group();
   const metal = new THREE.MeshStandardMaterial({
     color: 0x8a929c, metalness: 0.92, roughness: 0.38,
@@ -119,11 +138,11 @@ function buildScrapArm(): THREE.Group {
 
   // các mảnh sắt vụn vướng vào
   for (let i = 0; i < 7; i++) {
-    const s = 0.03 + Math.random() * 0.05;
+    const s = 0.03 + rng() * 0.05;
     const chunk = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.6, s * 1.3), darkMetal);
-    const a = Math.random() * Math.PI * 2;
-    chunk.position.set(Math.cos(a) * 0.11, -0.2 + Math.random() * 0.3, Math.sin(a) * 0.09);
-    chunk.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+    const a = rng() * Math.PI * 2;
+    chunk.position.set(Math.cos(a) * 0.11, -0.2 + rng() * 0.3, Math.sin(a) * 0.09);
+    chunk.rotation.set(rng() * 3, rng() * 3, rng() * 3);
     root.add(chunk);
   }
 
@@ -131,7 +150,7 @@ function buildScrapArm(): THREE.Group {
   for (let i = 0; i < 5; i++) {
     const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.02, 6), darkMetal);
     bolt.position.set(
-      (Math.random() - 0.5) * 0.16, -0.1 - Math.random() * 0.2, 0.09 + Math.random() * 0.02,
+      (rng() - 0.5) * 0.16, -0.1 - rng() * 0.2, 0.09 + rng() * 0.02,
     );
     bolt.rotation.x = Math.PI / 2;
     root.add(bolt);
@@ -253,20 +272,40 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
   // Hai đèn gắn thẳng vào camera — port từ zoro/src/engine/firstPersonRig.ts
   // (fpLight '#e0f2fe' 1.45, fpWarmLight '#fde68a' 0.65). Không có hai đèn này
   // thì kim loại của kiếm/tsuba và da tay bị bết, mất độ "sắc".
-  const fpLight = new THREE.PointLight('#e0f2fe', 1.45, 3.2);
-  fpLight.position.set(0, 0.35, 0.15);
+  const fpLight = new THREE.PointLight('#e0f2fe', 1.6, 4);
+  fpLight.position.set(0, 0.4, 0.35);
   root.add(fpLight);
-  const fpWarm = new THREE.PointLight('#fde68a', 0.65, 2.2);
-  fpWarm.position.set(0.2, -0.1, 0.3);
+  const fpWarm = new THREE.PointLight('#fde68a', 0.85, 3);
+  fpWarm.position.set(0.35, -0.15, 0.4);
   root.add(fpWarm);
+  // đèn phụ từ dưới hắt lên: bàn tay trong khung hình POV gần như bị che khỏi
+  // nắng chính, không có đèn này thì da và kim loại đều bết thành một khối tối
+  const fpFill = new THREE.PointLight(colorHex, 1.1, 2.6);
+  fpFill.position.set(-0.4, -0.5, -0.2);
+  root.add(fpFill);
   const track = <T extends THREE.BufferGeometry | THREE.Material>(x: T): T => {
     disposables.push(x);
     return x;
   };
 
+  /* ---------------------------------------------------------------------
+   * KHUNG HÌNH CHUẨN
+   *
+   * Bài đo headless cho thấy toạ độ cũ đặt mesh ở NDC y ≈ -1.0…-1.4, tức là
+   * NGAY DƯỚI mép dưới khung hình — người chơi chỉ thấy mẩu ngón tay. Bản
+   * gốc đặt tay ở y ≈ -0.3…-0.5 với z ≈ -0.5…-0.8 và phóng to rig lên.
+   *
+   * Ở đây gom về một chỗ: nhấc cả rig lên 0.10 và phóng 1.35×. Nhờ vậy tay
+   * nằm gọn trong khung, chiếm ~1/4 dưới màn hình giống bản gốc.
+   * ------------------------------------------------------------------- */
+  const FRAME_LIFT = 0.10;
+  const FRAME_SCALE = 1.35;
+
   let idle: (dt: number, time: number) => void = () => {};
   let cast: (k: number) => void = () => {};
   let special: ((moveId: string, k: number) => void) | undefined;
+  /** castT của frame trước — dùng để phát hiện lúc chiêu vừa kết thúc */
+  let lastCast = 0;
 
   switch (charId) {
     /* ------------------------------------------------ BOA HANCOCK */
@@ -301,8 +340,8 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
     /* ------------------------------------------------ CAPTAIN KID */
     case 'captain-kid': {
       const arm = buildScrapArm();
-      arm.position.set(0.34, -0.34, -0.5);
-      arm.rotation.set(0.18, -0.3, 0.16);
+      arm.position.set(0.30, -0.20, -0.5);
+      arm.rotation.set(0.18, -0.3, 0.22);
       root.add(arm);
 
       const spark = new THREE.Mesh(
@@ -318,11 +357,11 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
       const baseY = arm.position.y;
       idle = (_dt, time) => {
         arm.position.y = baseY + Math.sin(time * 1.3) * 0.014;
-        arm.rotation.z = 0.16 + Math.sin(time * 0.9) * 0.02;
+        arm.rotation.z = 0.22 + Math.sin(time * 0.9) * 0.02;
         spark.scale.setScalar(0.8 + Math.abs(Math.sin(time * 9)) * 0.6);
       };
       cast = (k) => {
-        arm.rotation.z = 0.16 - Math.sin(k * Math.PI) * 0.35;
+        arm.rotation.z = 0.22 - Math.sin(k * Math.PI) * 0.28;
         arm.position.z = -0.5 - Math.sin(k * Math.PI) * 0.12;
       };
       break;
@@ -479,12 +518,13 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
         );
       };
       cast = (k) => {
+        // k = 1 → punch = 0 → MỌI thứ trở lại đúng tư thế nghỉ.
+        // Đây là điều arena dựa vào để đóng pose dứt khoát sau mỗi chiêu.
         const punch = Math.sin(k * Math.PI);
-        // duỗi dài: tay vươn ra, bán kính giảm dần (thinK) — chép từ ArmRig
         stretch = punch;
         bulge = punch;
         hand.position.z = -0.6 - punch * 0.85;
-        hand.position.y = -0.13 + punch * 0.08;
+        hand.position.y = -0.13 + punch * 0.08 + (punch === 0 ? 0 : 0);
         hand.position.x = 0.34 - punch * 0.04;
         hand.scale.setScalar(1 + punch * 0.45);
         // ống dài ra và mảnh đi khi căng
@@ -495,7 +535,13 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
           0.05 * (1 - stretch * 0.2),
           bulge * 0.08,
         );
-        cuff.position.copy(shoulder).lerp(hand.position, 0.55);
+        // khi punch = 0 (k = 1) cuff phải về đúng 0.3/-0.26/-0.5 như lúc dựng
+        // k = 1 → punch = 0 → cuff về đúng vị trí dựng ban đầu
+        cuff.position.set(
+          0.3 + punch * 0.016,
+          -0.26 + punch * 0.004,
+          -0.5 + punch * 0.008,
+        );
         cuff.rotation.set(0.55 + punch * 0.2, 0.1, -0.5);
       };
       break;
@@ -504,20 +550,25 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
     /* ------------------------------------------------ ZORO */
     case 'zoro': {
       // 2 kiếm hai tay
+      // TƯ THẾ GỐC CHÍNH XÁC — characters/zoro/src/engine/firstPersonRig.ts
+      // dòng 590-608 (IDLE_SANTORYU_POSE). Chép nguyên số, không chỉnh tay:
+      //   trái  (Enma)         pos [-0.48, -0.19, -0.68] rot [-0.72, -0.24, -0.26]
+      //   phải  (Sandai)       pos [ 0.48, -0.19, -0.68] rot [-0.72,  0.24,  0.26]
+      //   miệng (Wado)         pos [ 0.32, -0.205, -0.52] rot [-0.08, π-0.06, -π/2+0.025]
       const rKat = buildKatana('#e8f4ff', '#1a3a2a');
-      rKat.position.set(0.3, -0.34, -0.5);
-      rKat.rotation.set(-0.72, -0.25, 0.42);
+      rKat.position.set(0.48, -0.19, -0.68);
+      rKat.rotation.set(-0.72, 0.24, 0.26);
       root.add(rKat);
 
       const lKat = buildKatana('#e8f4ff', '#1a3a2a');
-      lKat.position.set(-0.26, -0.36, -0.52);
-      lKat.rotation.set(-0.78, 0.3, -0.44);
+      lKat.position.set(-0.48, -0.19, -0.68);
+      lKat.rotation.set(-0.72, -0.24, -0.26);
       root.add(lKat);
 
-      // kiếm ngậm miệng (Wado) — góc dưới giữa khung hình
+      // kiếm ngậm miệng (Wado) — nằm ngang khung hình như gốc
       const mKat = buildKatana('#ffffff', '#f2f2f2');
-      mKat.position.set(0.02, -0.5, -0.44);
-      mKat.rotation.set(-1.02, 0.06, 0.06);
+      mKat.position.set(0.32, -0.205, -0.52);
+      mKat.rotation.set(-0.08, Math.PI - 0.06, -Math.PI * 0.5 + 0.025);
       root.add(mKat);
 
       // Hamon — đường sóng luyện kim trên lưỡi, đặc trưng katana Nhật.
@@ -539,9 +590,9 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
 
       idle = (_dt, time) => {
         const sway = Math.sin(time * 1.25) * 0.012;
-        rKat.position.y = -0.34 + sway;
-        lKat.position.y = -0.36 + sway * 0.8;
-        mKat.position.y = -0.5 + sway * 0.6;
+        rKat.position.y = -0.19 + sway;
+        lKat.position.y = -0.19 + sway * 0.8;
+        mKat.position.y = -0.205 + sway * 0.6;
         // hamon lấp lánh nhẹ — như phản chiếu ánh sáng trên lưỡi
         hamonMat.opacity = 0.4 + Math.abs(Math.sin(time * 2.2)) * 0.3;
         // lưỡi ma rung nhẹ như bản gốc (flutter = sin(t*9 + i*1.3) * 0.025)
@@ -558,17 +609,19 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
         }
       };
       cast = (k) => {
+        // trả về 0 khi k = 1 để pose đóng về tư thế nghỉ
         const swing = Math.sin(k * Math.PI);
-        rKat.rotation.z = 0.42 - swing * 1.5;
-        lKat.rotation.z = -0.44 + swing * 1.4;
+        // tư thế gốc: trái rot.z -0.26, phải +0.26, cùng rot.x -0.72
+        rKat.rotation.z = 0.26 + swing * 1.1;
+        lKat.rotation.z = -0.26 - swing * 1.0;
         rKat.rotation.x = -0.72 - swing * 0.35;
-        lKat.rotation.x = -0.78 - swing * 0.3;
-        // Santoryu: kiếm ngậm miệng cũng chém theo, cùng nhịp
-        mKat.rotation.x = -1.02 - swing * 0.5;
-        mKat.rotation.y = 0.06 + swing * 0.25;
+        lKat.rotation.x = -0.72 - swing * 0.3;
+        // Santoryu: kiếm ngậm miệng chém theo cùng nhịp
+        mKat.rotation.x = -0.08 - swing * 0.5;
+        mKat.rotation.y = Math.PI - 0.06 + swing * 0.25;
         // xoay cổ tay tạo đường chém chéo
-        rKat.rotation.y = -0.25 + swing * 0.55;
-        lKat.rotation.y = 0.3 - swing * 0.5;
+        rKat.rotation.y = 0.24 + swing * 0.4;
+        lKat.rotation.y = -0.24 - swing * 0.4;
       };
 
       /* ---- KYUTORYU: ASHURA — 6 lưỡi kiếm quỷ toả ra hai bên ---- */
@@ -619,12 +672,34 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
     }
   }
 
+  // gói rig trong group đã hiệu chỉnh khung hình
+  const framed = new THREE.Group();
+  framed.add(root);
+  framed.position.y = FRAME_LIFT;
+  framed.scale.setScalar(FRAME_SCALE);
+
   return {
-    root,
+    root: framed,
     special,
     update(dt, time, castT) {
       idle(dt, time);
-      if (castT > 0) cast(castT);
+      // ĐÓNG POSE DỨT KHOÁT khi chiêu kết thúc.
+      //
+      // Trước đây chỉ gọi idle() khi KHÔNG niệm chiêu, nên pose đặt trong
+      // cast() bị đóng băng ở frame cuối: arena cắt `casting` trước khi k tới
+      // 1, nên cast() không bao giờ được gọi với k = 1 để trả rig về tư thế
+      // nghỉ. Đó là lý do "bàn tay không giữ được".
+      //
+      // Giờ: trong lúc niệm thì cast(k) như cũ; đúng một frame sau khi chiêu
+      // hết, gọi cast(1) — với mọi rig, k = 1 cho sin(π) = 0, tức là tư thế
+      // nghỉ — rồi thôi. idle() vẫn chạy mỗi frame nên nhịp thở không mất.
+      if (castT > 0) {
+        cast(castT);
+        lastCast = castT;
+      } else if (lastCast > 0) {
+        cast(1);
+        lastCast = 0;
+      }
     },
     dispose() {
       for (const d of disposables) d.dispose();

@@ -137,6 +137,31 @@ export class ParticleField {
   }
 
   /** emit chép đúng tham số EmitOpts của bản gốc */
+  /**
+   * Tìm slot để ghi.
+   *
+   * Quét một cửa sổ quanh con trỏ thay vì cả pool (đủ tốt, rẻ): dừng ngay khi
+   * gặp slot chết; nếu cả cửa sổ đều sống thì chọn slot "chín" nhất.
+   */
+  private pickSlot(): number {
+    const n = this.pool.length;
+    let best = -1;
+    let bestAge = -1;
+    for (let k = 0; k < 24; k++) {
+      const idx = (this.cursor + k) % n;
+      const p = this.pool[idx];
+      if (!p.active) {
+        this.cursor = (idx + 1) % n;
+        return idx;
+      }
+      // tuổi tương đối: gần 1 là sắp tàn
+      const rel = p.life > 0 ? p.age / p.life : 1;
+      if (rel > bestAge) { bestAge = rel; best = idx; }
+    }
+    this.cursor = (best + 1) % n;
+    return best;
+  }
+
   spawn(o: {
     pos: THREE.Vector3;
     vel?: THREE.Vector3;
@@ -150,8 +175,10 @@ export class ParticleField {
     alpha?: number;
     align?: boolean;
   }): void {
-    const i = this.cursor;
-    this.cursor = (this.cursor + 1) % this.pool.length;
+    // Chọn slot: ưu tiên slot chết; nếu hết thì lấy slot có tuổi/life LỚN NHẤT
+    // (gần tàn nhất) thay vì vòng tròn mù. Vòng tròn mù khiến hạt vừa sinh đã
+    // bị hạt sau ghi đè ngay — đó là lý do hiệu ứng "nhấp nháy" rồi biến mất.
+    const i = this.pickSlot();
     const i3 = i * 3;
     const p = this.pool[i];
     p.active = true;

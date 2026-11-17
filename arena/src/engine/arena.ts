@@ -22,6 +22,9 @@ import { CharFx } from './particles';
 import { buildPost, type PostRig } from './post';
 import { buildViewModel, type ViewModel } from './viewmodel';
 import { World, ARENA, PLAYER_RADIUS, ENEMY_RADIUS } from './world';
+
+/** ngẫu nhiên trong khoảng — dùng cho hiệu ứng, không ảnh hưởng mô phỏng */
+const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 import { Enemy, type StatusEffect } from './enemy';
 
 export interface HudSnapshot {
@@ -85,16 +88,28 @@ export class Arena {
   private pitch = 0;
   private hp = MAX_HP;
   private cooldowns: Record<string, number> = {};
-  private casting: { move: Move; t: number; fired: boolean } | null = null;
+  /**
+   * Trạng thái đang niệm chiêu.
+   *
+   * `anim` là thời lượng DIỄN XUẤT — tách khỏi `move.duration` (thời lượng
+   * hoạt ảnh gốc, có chiêu tới 5 giây). Bản gốc chạy `m.update(...)` suốt
+   * `m.dur`, và arena giữ đúng điều đó: hiệu ứng phải sống trọn chiêu, không
+   * phải tắt sau một nhịp 0.55s.
+   */
+  private casting: { move: Move; t: number; fired: boolean; anim: number } | null = null;
   private combo = 0;
   private comboTimer = 0;
   private invuln = 0;
   /** thời điểm được phép ra chiêu tiếp theo (khoá niệm) */
   private lockUntil = 0;
+  /** tích luỹ thời gian phát hiệu ứng trong lúc niệm chiêu */
+  private fxAcc = 0;
+  /** tương tự cho hiệu ứng của đối thủ */
+  private enemyFxAcc = 0;
   private playerStatuses: StatusEffect[] = [];
 
   /* ------------------------------------------------------- enemy AI */
-  private enemyWindup: { move: Move; t: number; total: number } | null = null;
+  private enemyWindup: { move: Move; t: number; total: number; anim: number; shown: number } | null = null;
   private enemyCooldowns: Record<string, number> = {};
   private aiTimer = 0;
   private aiStrafeDir = 1;
@@ -148,9 +163,11 @@ export class Arena {
     this.scene.add(this.camera);
 
     /* ------------------------------------------------------ hệ hiệu ứng */
-    this.fxP = new CharFx(this.playerChar);
+    // 2400 hạt mỗi bên: đủ chứa 1080 hạt/giây với đời sống tới 2 giây (Imu).
+    // Trước đây 700 nên hạt mới sinh bị hạt sau ghi đè ngay lập tức.
+    this.fxP = new CharFx(this.playerChar, 2400);
     this.scene.add(this.fxP.group);
-    this.fxE = new CharFx(this.enemyChar);
+    this.fxE = new CharFx(this.enemyChar, 2400);
     this.scene.add(this.fxE.group);
 
     this.beams = new BeamSystem();
@@ -286,7 +303,10 @@ export class Arena {
     if (this.playerStatuses.some((s) => s.kind === 'stun' || s.kind === 'petrify' || s.kind === 'bind')) return;
 
     const pc = getCharacter(this.playerChar);
-    this.casting = { move, t: 0, fired: false };
+    // Diễn xuất kéo dài đúng `duration` gốc (0.85s…5.15s), không cắt ngắn.
+    // Sàn 0.9s để chiêu ngắn nhất cũng kịp phô diễn.
+    const anim = Math.max(0.9, move.duration);
+    this.casting = { move, t: 0, fired: false, anim };
     // cooldown thực = lớn hơn giữa cooldown gốc và khoá niệm chiêu
     this.cooldowns[move.id] = Math.max(effectiveCooldown(move), castLock(move));
     this.lockUntil = this.time + castLock(move);
@@ -316,6 +336,112 @@ export class Arena {
   }
 
   /* ==================================================== resolve hit */
+
+  /**
+   * PHÔ DIỄN CHIÊU — chạy MỖI FRAME trong lúc niệm, suốt `duration` gốc.
+   *
+   * Đây là phần làm nên "màn phô diễn" của bản gốc. Trước đây arena chỉ phát
+   * một cụm hạt ở thời điểm trúng đòn rồi thôi, nên người chơi gần như không
+   * thấy gì ngoài tia sáng nhấp nháy.
+   *
+   * Mỗi hệ chiêu có nhịp phát riêng, lấy theo chỗ gọi trong game gốc:
+   *   heart   → tim bay lên quanh tay (Game.ts:1068)
+   *   light   → vệt sáng dọc đường ngắm (gfx.ts Streaks)
+   *   blade   → vệt chém quét qua (zoro slash)
+   *   string  → chỉ căng từ tay tới địch (Effects.ts)
+   *   magnet  → mảnh sắt xoáy quanh tay + tia sét (FX.ts:420/458)
+   *   void    → khói đen cuộn lên từ dưới (fxlib.ts:34)
+   *   rubber  → chấm halftone bung ra (effects.ts Bursts)
+   */
+  private performMoveFx(move: Move, k: number, dt: number) {
+    const fc = getCharacter(this.playerChar);
+    const col = new THREE.Color(move.color);
+    const chest = this.playerChest();
+    const fwd = this.forward();
+    const power = clamp(powerOf(fc, move) / 60, 0.3, 1.6);
+
+    // tích luỹ thời gian để phát theo nhịp, không phát mỗi frame (nổ pool)
+    this.fxAcc += dt;
+    const interval = 0.045 / power;
+    if (this.fxAcc < interval) return;
+    this.fxAcc = 0;
+
+    // cường độ tăng dần tới đỉnh rồi giảm — "vào chiêu" rồi "bung"
+    const envelope = Math.sin(Math.min(1, k) * Math.PI);
+
+    switch (move.fx) {
+      case 'heart': {
+        // tim bay lên quanh bàn tay, toả rộng dần
+        const p = chest.clone().addScaledVector(fwd, 0.5);
+        p.x += rnd(-0.5, 0.5);
+        p.y += rnd(-0.3, 0.4);
+        this.fxP.emit(p, fwd.clone().add(new THREE.Vector3(0, 0.4, 0)).normalize(),
+          col, 0.5 + envelope);
+        if (k > 0.25 && k < 0.75) {
+          this.beams.ring(p, col, 0.7 + envelope * 1.5, 0.5, 12);
+        }
+        break;
+      }
+      case 'light': {
+        // vệt sáng bắn dọc đường ngắm
+        const far = chest.clone().addScaledVector(fwd, move.reach * (0.5 + envelope * 0.5));
+        this.fxP.stream(chest, far, col, 0.6 + envelope);
+        this.beams.beam(chest, far, col, 0.05 + envelope * 0.14, 0.14);
+        break;
+      }
+      case 'blade': {
+        // vệt chém quét qua trước mặt
+        const target = chest.clone().addScaledVector(fwd, move.reach * 0.7);
+        this.fxP.emit(target, fwd, col, 0.6 + envelope);
+        this.slashes.slash(target, fwd, col, 2.4 + envelope * 2.4,
+          Math.PI * 0.85, 0.22, (k * 2 + Math.random() * 0.4) * Math.PI);
+        break;
+      }
+      case 'string': {
+        // chỉ căng từ tay toả ra nhiều hướng
+        for (let i = 0; i < 3; i++) {
+          const off = new THREE.Vector3(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)).multiplyScalar(0.4);
+          const to = chest.clone().addScaledVector(fwd, move.reach * 0.5).add(off);
+          this.beams.beam(chest, to, col, 0.025 + envelope * 0.03, 0.25);
+        }
+        this.fxP.emit(chest, fwd, col, 0.5 + envelope);
+        break;
+      }
+      case 'magnet': {
+        // mảnh sắt xoáy quanh tay + tia sét
+        const a = k * Math.PI * 6;
+        const p = chest.clone().add(new THREE.Vector3(Math.cos(a) * 0.9, Math.sin(a * 1.3) * 0.5, Math.sin(a) * 0.9));
+        this.fxP.emit(p, p.clone().sub(chest).normalize(), col, 0.6 + envelope);
+        if (Math.random() < 0.3) this.beams.ring(p, col, 0.6 + envelope, 0.35, 10);
+        break;
+      }
+      case 'void': {
+        // khói đen cuộn lên từ mặt đất quanh người chơi
+        const a = Math.random() * Math.PI * 2;
+        const r = 0.5 + Math.random() * 1.5;
+        const p = new THREE.Vector3(
+          this.playerPos.x + Math.cos(a) * r, 0.1, this.playerPos.z + Math.sin(a) * r,
+        );
+        this.fxP.emit(p, new THREE.Vector3(0, 1, 0), col, 0.7 + envelope);
+        if (k > 0.4 && Math.random() < 0.25) {
+          this.beams.ring(new THREE.Vector3(p.x, 0.15, p.z), col, 1 + envelope, 0.6, 16);
+        }
+        break;
+      }
+      case 'rubber': {
+        // chấm halftone bung ra từ nắm đấm
+        const p = chest.clone().addScaledVector(fwd, 0.9);
+        this.fxP.emit(p, fwd, col, 0.5 + envelope);
+        break;
+      }
+    }
+
+    // đòn ultimate: thêm cột sáng + sóng xung kích mỗi nhịp
+    if (move.ultimate && Math.random() < 0.12) {
+      this.beams.ring(new THREE.Vector3(this.playerPos.x, 0.2, this.playerPos.z),
+        col, 1.5 + envelope * 1.5, 0.55, 20);
+    }
+  }
 
   private resolveCast(move: Move): DamageResult {
     const pc = getCharacter(this.playerChar);
@@ -472,21 +598,23 @@ export class Arena {
 
     /* --- đang niệm chiêu --- */
     if (this.enemyWindup) {
-      this.enemyWindup.t -= dt;
-      const k = 1 - this.enemyWindup.t / this.enemyWindup.total;
-      void k;
-      // hiệu ứng niệm quanh đối thủ
-      if (Math.random() < dt * 22) {
-        const c = new THREE.Color(this.enemyWindup.move.color);
-        this.fxE.emit(
-          this.enemy.chestPoint().add(new THREE.Vector3(
-            (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 1.2)),
-          new THREE.Vector3(0, 1, 0), c, 0.16);
+      const w = this.enemyWindup;
+      if (w.t > 0) {
+        // ---- giai đoạn niệm: hiệu ứng dày dần quanh đối thủ ----
+        w.t -= dt;
+        w.shown += dt;
+        const k = clamp(1 - w.t / w.total, 0, 1);
+        this.performEnemyFx(w.move, k, dt);
+        if (w.t <= 0) {
+          this.executeEnemyAttack(w.move);
+        }
+        return;
       }
-      if (this.enemyWindup.t <= 0) {
-        this.executeEnemyAttack(this.enemyWindup.move);
-        this.enemyWindup = null;
-      }
+      // ---- giai đoạn diễn xuất sau khi đánh: hiệu ứng vẫn tiếp tục ----
+      w.shown += dt;
+      const k2 = clamp(w.shown / w.anim, 0, 1);
+      this.performEnemyFx(w.move, k2, dt);
+      if (w.shown >= w.anim) this.enemyWindup = null;
       return;
     }
 
@@ -538,12 +666,99 @@ export class Arena {
   }
 
   private startEnemyWindup(move: Move) {
-    const windup = clamp(0.35 + powerOf(getCharacter(this.enemyChar), move) / 200, 0.35, 1.15);
-    this.enemyWindup = { move, t: windup, total: windup };
+    // Đối thủ cũng phô diễn đủ lâu như bản gốc: windup + diễn xuất = duration.
+    // Trước đây bóp còn tối đa 1.15s nên đòn 5 giây của Zoro trôi qua trong
+    // tích tắc, người chơi không kịp thấy gì.
+    const windup = clamp(0.35 + powerOf(getCharacter(this.enemyChar), move) / 200, 0.5, 1.4);
+    this.enemyWindup = { move, t: windup, total: windup, anim: Math.max(0.9, move.duration), shown: 0 };
     this.enemyCooldowns[move.id] = Math.max(effectiveCooldown(move), castLock(move)) * 1.15;
     this.enemy.state = 'windup';
     this.enemy.windupT = windup;
     this.opts.onLog(`⚠ ${getCharacter(this.enemyChar).shortName} niệm ${move.name}`, move.color, 'info');
+  }
+
+  /**
+   * PHÔ DIỄN CỦA ĐỐI THỦ — chạy mỗi frame, suốt cả windup lẫn lúc ra đòn.
+   *
+   * Đây là phần "hiệu ứng đó lên đối thủ": mỗi nhân vật phải phô ra đúng
+   * chữ ký của mình khi ĐÁNH, không chỉ khi bị đánh. Trước đây đối thủ chỉ
+   * phát vài hạt lẻ tẻ nên nhìn như khúc gỗ biết bay.
+   */
+  private performEnemyFx(move: Move, k: number, dt: number) {
+    const ec = getCharacter(this.enemyChar);
+    const col = new THREE.Color(move.color);
+    const chest = this.enemy.chestPoint();
+    const toPlayer = this.playerChest().sub(chest).normalize();
+    const power = clamp(powerOf(ec, move) / 60, 0.3, 1.6);
+
+    this.enemyFxAcc += dt;
+    const interval = 0.05 / power;
+    if (this.enemyFxAcc < interval) return;
+    this.enemyFxAcc = 0;
+
+    const envelope = Math.sin(clamp(k, 0, 1) * Math.PI);
+
+    switch (move.fx) {
+      case 'heart': {
+        // tim bay lên quanh đối thủ
+        const p = chest.clone();
+        p.x += rnd(-0.6, 0.6); p.y += rnd(-0.2, 0.6); p.z += rnd(-0.6, 0.6);
+        this.fxE.emit(p, new THREE.Vector3(0, 1, 0), col, 0.5 + envelope);
+        break;
+      }
+      case 'light': {
+        const far = chest.clone().addScaledVector(toPlayer, move.reach * 0.6);
+        this.fxE.stream(chest, far, col, 0.6 + envelope);
+        this.beams.beam(chest, far, col, 0.05 + envelope * 0.12, 0.14);
+        break;
+      }
+      case 'blade': {
+        const target = chest.clone().addScaledVector(toPlayer, 2.2);
+        this.fxE.emit(target, toPlayer, col, 0.6 + envelope);
+        this.slashes.slash(target, toPlayer, col, 2.6 + envelope * 2.2, Math.PI * 0.85, 0.22, Math.random() * Math.PI);
+        break;
+      }
+      case 'string': {
+        for (let i = 0; i < 2; i++) {
+          const off = new THREE.Vector3(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)).multiplyScalar(0.5);
+          this.beams.beam(chest, this.playerChest().add(off), col, 0.025 + envelope * 0.03, 0.22);
+        }
+        this.fxE.emit(chest, toPlayer, col, 0.5 + envelope);
+        break;
+      }
+      case 'magnet': {
+        const a = k * Math.PI * 6;
+        const p = chest.clone().add(
+          new THREE.Vector3(Math.cos(a) * 1.0, Math.sin(a * 1.3) * 0.6, Math.sin(a) * 1.0),
+        );
+        this.fxE.emit(p, p.clone().sub(chest).normalize(), col, 0.6 + envelope);
+        if (Math.random() < 0.3) this.beams.ring(p, col, 0.7 + envelope, 0.4, 10);
+        break;
+      }
+      case 'void': {
+        const a = Math.random() * Math.PI * 2;
+        const r = 0.5 + Math.random() * 1.6;
+        const p = new THREE.Vector3(
+          this.enemy.pos.x + Math.cos(a) * r, 0.1, this.enemy.pos.z + Math.sin(a) * r,
+        );
+        this.fxE.emit(p, new THREE.Vector3(0, 1, 0), col, 0.7 + envelope);
+        if (Math.random() < 0.25) {
+          this.beams.ring(new THREE.Vector3(p.x, 0.15, p.z), col, 1 + envelope, 0.6, 16);
+        }
+        break;
+      }
+      case 'rubber': {
+        const p = chest.clone().addScaledVector(toPlayer, 1.0);
+        this.fxE.emit(p, toPlayer, col, 0.5 + envelope);
+        break;
+      }
+    }
+
+    // ultimate của đối thủ: cột sáng dưới chân
+    if (move.ultimate && Math.random() < 0.1) {
+      this.beams.ring(new THREE.Vector3(this.enemy.pos.x, 0.2, this.enemy.pos.z),
+        col, 1.5 + envelope * 1.5, 0.6, 20);
+    }
   }
 
   private executeEnemyAttack(move: Move) {
@@ -688,7 +903,7 @@ export class Arena {
 
     /* --- casting --- */
     if (this.casting) {
-      const k = Math.min(1, this.casting.t / this.casting.move.duration);
+      const k = Math.min(1, this.casting.t / this.casting.anim);
       const fireAt = Math.min(
         0.62, 0.3 + powerOf(getCharacter(this.playerChar), this.casting.move) / 200,
       );
@@ -696,13 +911,17 @@ export class Arena {
         this.casting.fired = true;
         this.resolveCast(this.casting.move);
       }
+      // ---- phô diễn LIÊN TỤC suốt chiêu, đúng như bản gốc ----
+      // Bản gốc gọi hiệu ứng mỗi frame trong `m.update()`, không phải một
+      // lần rồi thôi. Đây chính là lý do arena trước đây trông trống trơn.
+      this.performMoveFx(this.casting.move, k, dt);
       this.casting.t += dt;
-      if (this.casting.t >= this.casting.move.duration) this.casting = null;
+      if (this.casting.t >= this.casting.anim) this.casting = null;
     }
 
     /* --- viewmodel --- */
     const castT = this.casting
-      ? Math.min(1, this.casting.t / this.casting.move.duration)
+      ? Math.min(1, this.casting.t / this.casting.anim)
       : 0;
     this.viewModel.update(dt, this.time, castT);
     // trạng thái đặc biệt của rig (Ashura của Zoro…). Trả về 0 khi không niệm.
@@ -751,7 +970,7 @@ export class Arena {
       hpRatio: this.hp / MAX_HP,
       moving: this.playerVel.lengthSq() > 1,
       casting: !!this.casting,
-      castK: this.casting ? Math.min(1, this.casting.t / Math.max(0.01, this.casting.move.duration)) : 0,
+      castK: this.casting ? Math.min(1, this.casting.t / Math.max(0.01, this.casting.anim)) : 0,
     });
 
     /* --- fx --- */
@@ -782,7 +1001,7 @@ export class Arena {
   private snapshot(): HudSnapshot {
     const pc = getCharacter(this.playerChar);
     const ec = getCharacter(this.enemyChar);
-    const castK = this.casting ? Math.min(1, this.casting.t / this.casting.move.duration) : 0;
+    const castK = this.casting ? Math.min(1, this.casting.t / this.casting.anim) : 0;
     return {
       playerHp: this.hp,
       playerMaxHp: MAX_HP,

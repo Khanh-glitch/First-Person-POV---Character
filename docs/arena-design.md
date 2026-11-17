@@ -224,6 +224,15 @@ trực tiếp với mã nguồn gốc).
 | 5 | Rig POV + đèn FP + Ashura | 10 |
 | 6 | FOV / exposure | 7 |
 
+### Phần C — nhìn được (`frame-check.ts`)
+
+| # | Trục | Ngưỡng |
+|---|---|---|
+| 1 | Mesh của rig nằm trong khung hình | ≥ 75% |
+| 2 | Bể hạt đủ chỗ cho hạt tồn đọng | tốc độ × đời sống ≤ 2400 |
+| 3 | Chiêu diễn đủ lâu | ≥ 0.9s mỗi chiêu |
+| 4 | Tư thế đóng đúng sau chiêu | khớp tuyệt đối |
+
 Mục 1 đọc bằng bộ tách ngoặc cân bằng chứ không regex, vì tham số đầu của
 `UnrealBloomPass` là `new Vector2(w, h)` có dấu phẩy bên trong.
 
@@ -282,6 +291,44 @@ Hướng khắc phục nếu muốn đi tiếp:
    *tiềm năng* (DPS), và tiềm năng đã cân tuyệt đối (1.00×).
 
 Đấu trường hiện chọn hướng 3 và ghi rõ giới hạn này thay vì che đi.
+
+### 8.0 Vì sao "port đủ" mà vẫn không thấy gì
+
+Đây là bài học đáng ghi lại nhất của dự án. Sau khi port xong hậu kỳ, hạt và
+rig — **47/47 mục kiểm tra trung thực đều đạt** — người chơi thật vẫn báo
+"không thấy gì ngoài cái tia sáng nhấp nháy, bàn tay cũng không giữ được".
+Kiểm tra xanh, sản phẩm hỏng.
+
+Nguyên nhân không phải một lỗi, mà **bốn lỗi ở tầng khác** — tầng mà bài kiểm
+tra tham số không nhìn tới:
+
+1. **Hiệu ứng chỉ nổ một lần, không diễn liên tục.** Bản gốc gọi hiệu ứng
+   *mỗi frame* trong `m.update()` suốt `m.dur`. Arena chỉ phát một cụm ở thời
+   điểm trúng đòn. Sửa: `performMoveFx()` / `performEnemyFx()` chạy mỗi frame.
+
+2. **Chiêu bị cắt còn 0.55s.** `casting` dùng `move.duration` nhưng cooldown
+   0.55s ghi đè nhịp, nên đòn 5 giây của Zoro trôi qua trong tích tắc. Sửa:
+   tách `anim` (thời lượng diễn xuất) khỏi cooldown; sàn 0.9s.
+
+3. **Bể hạt tràn.** Pool 700 hạt/bên, trong khi nhịp phát là 45 lần/giây ×
+   14–24 hạt = **630–1080 hạt/giây**. Hạt vừa sinh đã bị hạt sau ghi đè →
+   nhìn như "nhấp nháy". Sửa: pool 2400 + `pickSlot()` chọn slot chết thay vì
+   vòng tròn mù.
+
+4. **Rig không nằm trong khung hình.** Bài đo headless cho thấy toạ độ cũ đặt
+   mesh ở NDC `y ≈ -1.0…-1.4`, tức **ngay dưới mép dưới màn hình**. Sửa: gói
+   rig trong group `FRAME_LIFT = 0.10` + `FRAME_SCALE = 1.35`, và lấy tư thế
+   Zoro nguyên số từ `IDLE_SANTORYU_POSE`.
+
+Cộng thêm một lỗi phụ: `cast()` chỉ được gọi khi `castT > 0`, nên khi arena
+cắt `casting` trước lúc `k` chạm 1, rig **đóng băng ở frame cuối** của
+animation — chính là "bàn tay không giữ được". Sửa: gọi `cast(1)` đúng một
+lần khi chiêu kết thúc (với mọi rig, `k = 1` cho `sin(π) = 0` = tư thế nghỉ).
+
+Bài kiểm tra mới `scripts/frame-check.ts` đo đúng những thứ này: rig có trong
+khung không, bể hạt có đủ không, chiêu có diễn đủ lâu không, tư thế có đóng
+đúng không. Nó cũng bắt được rig Kid dùng `Math.random()` khi dựng — mỗi lần
+tải lại một hình khác, có lần rơi khỏi khung; nay dùng PRNG có seed.
 
 ### 8.1 Bảng độ trung thực (đã port)
 

@@ -8,10 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "check": "tsx scripts/balance-check.ts && tsx scripts/fidelity-check.ts",
+    "check": "tsx scripts/balance-check.ts && tsx scripts/fidelity-check.ts && tsx scripts/frame-check.ts",
     "solve": "tsx scripts/solve-balance.ts",
     "solve:matchup": "tsx scripts/solve-matchup.ts",
-    "fidelity": "tsx scripts/fidelity-check.ts"
+    "fidelity": "tsx scripts/fidelity-check.ts",
+    "frame": "tsx scripts/frame-check.ts"
   },
   "dependencies": {
     "@types/three": "^0.187.0",
