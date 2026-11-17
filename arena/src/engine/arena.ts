@@ -17,7 +17,9 @@ import { getCharacter, type CharId, type Move } from '../data/roster';
 import {
   computeDamage, effectiveCooldown, castLock, powerOf, MAX_HP, type DamageResult,
 } from './combat';
-import { ParticleSystem, BeamSystem, SlashSystem } from './fx';
+import { BeamSystem, SlashSystem } from './fx';
+import { CharFx } from './particles';
+import { buildPost, type PostRig } from './post';
 import { buildViewModel, type ViewModel } from './viewmodel';
 import { World, ARENA, PLAYER_RADIUS, ENEMY_RADIUS } from './world';
 import { Enemy, type StatusEffect } from './enemy';
@@ -61,10 +63,13 @@ const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
 export class Arena {
   private world = new World();
   private renderer: THREE.WebGLRenderer;
+  private post: PostRig;
   private camera: THREE.PerspectiveCamera;
   private scene: THREE.Scene;
 
-  private fx: ParticleSystem;
+  /** hệ hạt của người chơi và của đối thủ — mỗi bên dùng đúng texture của mình */
+  private fxP: CharFx;
+  private fxE: CharFx;
   private beams: BeamSystem;
   private slashes: SlashSystem;
   private viewModel: ViewModel;
@@ -143,8 +148,10 @@ export class Arena {
     this.scene.add(this.camera);
 
     /* ------------------------------------------------------ hệ hiệu ứng */
-    this.fx = new ParticleSystem(900);
-    this.scene.add(this.fx.group);
+    this.fxP = new CharFx(this.playerChar);
+    this.scene.add(this.fxP.group);
+    this.fxE = new CharFx(this.enemyChar);
+    this.scene.add(this.fxE.group);
 
     this.beams = new BeamSystem();
     this.scene.add(this.beams.group);
@@ -155,6 +162,17 @@ export class Arena {
     /* ------------------------------------------------------ viewmodel */
     this.viewModel = buildViewModel(this.playerChar, pc.color);
     this.camera.add(this.viewModel.root);
+
+    /* ------------------------------------------------------ hậu kỳ */
+    // Pipeline hậu kỳ riêng của từng nhân vật (port nguyên văn từ dự án gốc)
+    this.post = buildPost(
+      this.playerChar,
+      this.renderer,
+      this.scene,
+      this.camera,
+      window.innerWidth,
+      window.innerHeight,
+    );
 
     /* ------------------------------------------------------ đối thủ */
     this.enemy = new Enemy(this.enemyChar, ec.color);
@@ -175,6 +193,9 @@ export class Arena {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
+    this.post?.resize(w, h);
+    this.fxP?.resize();
+    this.fxE?.resize();
   };
 
   private onKeyDown = (e: KeyboardEvent) => {
@@ -273,11 +294,12 @@ export class Arena {
     // hiệu ứng khởi phát tại tay + camera kick
     const chest = this.playerChest();
     const dir = this.forward();
-    this.fx.emit(move.fx, chest, dir, new THREE.Color(move.color), move.ultimate ? 1.4 : 0.6);
+    this.fxP.emit(chest, dir, new THREE.Color(move.color), move.ultimate ? 1.4 : 0.6);
     if (move.ultimate) {
       this.beams.ring(new THREE.Vector3(this.playerPos.x, 0.2, this.playerPos.z),
         new THREE.Color(move.color), 2, 0.7, 22);
     }
+    this.post.onCastStart(move, powerOf(pc, move));
     this.opts.onLog(`${pc.shortName} → ${move.name}`, move.color, move.ultimate ? 'ult' : 'info');
   }
 
@@ -313,7 +335,7 @@ export class Arena {
       const col = new THREE.Color(move.color);
       const power = clamp(powerOf(pc, move) / 60, 0.3, 1.6);
 
-      this.fx.emit(move.fx, target, dir, col, power);
+      this.fxP.emit(target, dir, col, power);
 
       // tia / chém nối từ tay tới địch cho các hệ phù hợp
       switch (move.fx) {
@@ -359,6 +381,9 @@ export class Arena {
         }
       }
 
+      // ---- hậu kỳ: đòn trúng đích ----
+      this.post.onHit(move, powerOf(getCharacter(this.playerChar), move));
+
       // ---- status effect theo hệ chiêu ----
       this.applyStatusToEnemy(move, res.damage);
 
@@ -374,7 +399,7 @@ export class Arena {
     } else {
       // trượt — vẫn phát hiệu ứng ở khoảng trống để thấy được tầm với
       const far = this.playerChest().addScaledVector(this.forward(), Math.min(move.reach, dist + 6));
-      this.fx.emit(move.fx, far, this.forward(), new THREE.Color(move.color), 0.4);
+      this.fxP.emit(far, this.forward(), new THREE.Color(move.color), 0.4);
       if (move.fx === 'light') {
         this.beams.beam(this.playerChest(), far, new THREE.Color(move.color), 0.1, 0.2);
       }
@@ -412,13 +437,11 @@ export class Arena {
         break;
     }
     if (dmg > 0) {
-      const labelMap: Record<string, string> = {
-        petrify: 'HOÁ ĐÁ', stun: 'TÊ LIỆT', bind: 'TRÓI', mark: 'HẮC ẤN', burn: 'THIÊU ĐỐT',
-      };
+      // Dùng chính nhãn của trạng thái vừa gắn, KHÔNG qua bảng tra theo `kind`:
+      // `kind: 'mark'` là dùng chung cho Hắc Ấn của Imu và Bỏng Sáng của Kizaru,
+      // nên bảng tra cũ in sai tên cho Kizaru.
       const st = this.enemy.statuses[this.enemy.statuses.length - 1];
-      if (st && labelMap[st.kind]) {
-        this.opts.onLog(`${labelMap[st.kind]} · ${c}`, move.color, 'status');
-      }
+      if (st) this.opts.onLog(`${st.label} · ${c}`, move.color, 'status');
     }
   }
 
@@ -455,7 +478,7 @@ export class Arena {
       // hiệu ứng niệm quanh đối thủ
       if (Math.random() < dt * 22) {
         const c = new THREE.Color(this.enemyWindup.move.color);
-        this.fx.emit(this.enemyWindup.move.fx,
+        this.fxE.emit(
           this.enemy.chestPoint().add(new THREE.Vector3(
             (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 1.2)),
           new THREE.Vector3(0, 1, 0), c, 0.16);
@@ -540,10 +563,8 @@ export class Arena {
     const col = new THREE.Color(move.color);
 
     // hiệu ứng bay về phía NGƯỜI CHƠI
-    this.fx.emit(
-      move.fx, to, from.clone().sub(to).normalize(), col,
-      clamp(powerOf(getCharacter(this.enemyChar), move) / 60, 0.3, 1.4),
-    );
+    // dùng texture + tham số của CHÍNH đối thủ, và kéo thành vệt từ địch tới người chơi
+    this.fxE.stream(from, to, col, clamp(powerOf(getCharacter(this.enemyChar), move) / 60, 0.3, 1.4));
     if (move.fx === 'light' || move.fx === 'magnet' || move.fx === 'rubber' || move.fx === 'blade') {
       this.beams.beam(from, to, col, 0.12, 0.24);
     }
@@ -554,6 +575,7 @@ export class Arena {
     if (res.inRange && this.invuln <= 0) {
       this.hp = Math.max(0, this.hp - res.damage);
       this.shakeScreen(0.3 + res.damage / 260, 0.2);
+      this.post.onHurt(Math.min(1, res.damage / MAX_HP));
       this.opts.onLog(`${move.name} → -${res.damage}`, move.color, 'hit');
 
       // status lên người chơi
@@ -683,6 +705,10 @@ export class Arena {
       ? Math.min(1, this.casting.t / this.casting.move.duration)
       : 0;
     this.viewModel.update(dt, this.time, castT);
+    // trạng thái đặc biệt của rig (Ashura của Zoro…). Trả về 0 khi không niệm.
+    if (this.viewModel.special) {
+      this.viewModel.special(this.casting ? this.casting.move.id : '', castT);
+    }
 
     /* --- enemy --- */
     this.updateEnemyAI(dt);
@@ -720,15 +746,24 @@ export class Arena {
       if (this.shakeTime <= 0) this.shakeAmp = 0;
     }
 
+    /* --- hậu kỳ --- */
+    this.post.tick({
+      hpRatio: this.hp / MAX_HP,
+      moving: this.playerVel.lengthSq() > 1,
+      casting: !!this.casting,
+      castK: this.casting ? Math.min(1, this.casting.t / Math.max(0.01, this.casting.move.duration)) : 0,
+    });
+
     /* --- fx --- */
-    this.fx.update(dt);
+    this.fxP.update(dt, this.camera);
+    this.fxE.update(dt, this.camera);
     this.beams.update(dt);
     this.slashes.update(dt);
     this.world.update(dt, this.time);
   }
 
   private render() {
-    this.renderer.render(this.scene, this.camera);
+    this.post.render(0, this.time);
   }
 
   /* ==================================================== end */
@@ -830,7 +865,8 @@ export class Arena {
 
     this.viewModel.dispose();
     this.enemy.dispose();
-    this.fx.dispose();
+    this.fxP.dispose();
+    this.fxE.dispose();
     this.beams.dispose();
     this.slashes.dispose();
     this.world.dispose();

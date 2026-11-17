@@ -166,7 +166,81 @@ function buildVoidOrb(color: string): THREE.Group {
   return root;
 }
 
+
+/**
+ * ỐNG CO GIÃN — port cơ chế từ characters/luffy/src/game/arm.ts (ArmRig).
+ *
+ * Bản gốc không dùng CylinderGeometry mà dựng một lưới ống động: N đốt dọc
+ * theo đường cong, mỗi đốt R điểm quanh tiết diện, đổ vào BufferGeometry và
+ * cập nhật position mỗi frame. Nhờ vậy tay có thể DUỖI DÀI (bán kính giảm khi
+ * căng) đúng chất cao su, điều mà cylinder cứng không làm được.
+ */
+function buildTube(segments = 14, radial = 10) {
+  const pos = new Float32Array((segments + 1) * radial * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+  const idx: number[] = [];
+  for (let i = 0; i < segments; i++) {
+    for (let j = 0; j < radial; j++) {
+      const a = i * radial + j;
+      const b = i * radial + ((j + 1) % radial);
+      const c = (i + 1) * radial + j;
+      const d = (i + 1) * radial + ((j + 1) % radial);
+      idx.push(a, b, c, b, d, c);
+    }
+  }
+  geo.setIndex(idx);
+  geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(pos.length), 3));
+
+  /** cập nhật hình dạng ống: từ gốc tới đỉnh, bán kính t0→t1, có thể cong */
+  const update = (
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    r0: number,
+    r1: number,
+    bend = 0,
+  ) => {
+    const dir = to.clone().sub(from);
+    const len = dir.length();
+    dir.normalize();
+    // trục phụ để dựng tiết diện
+    const up = Math.abs(dir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+    const side = new THREE.Vector3().crossVectors(dir, up).normalize();
+    const side2 = new THREE.Vector3().crossVectors(dir, side).normalize();
+
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      // độ cong: đẩy ra giữa ống theo hình sin
+      const bulge = Math.sin(t * Math.PI) * bend;
+      const center = from.clone().addScaledVector(dir, len * t).addScaledVector(side, bulge);
+      const r = r0 + (r1 - r0) * t;
+      for (let j = 0; j < radial; j++) {
+        const a = (j / radial) * Math.PI * 2;
+        const p = center
+          .clone()
+          .addScaledVector(side, Math.cos(a) * r)
+          .addScaledVector(side2, Math.sin(a) * r);
+        const k = (i * radial + j) * 3;
+        pos[k] = p.x;
+        pos[k + 1] = p.y;
+        pos[k + 2] = p.z;
+      }
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.computeVertexNormals();
+    geo.attributes.normal.needsUpdate = true;
+  };
+
+  return { geo, update };
+}
+
 export interface ViewModel {
+  /**
+   * Trạng thái đặc biệt theo từng đòn (ví dụ Ashura của Zoro).
+   * `key` là id của đòn đang niệm, `k` là tiến độ 0..1.
+   * Rig nào không dùng thì bỏ trống.
+   */
+  special?(moveId: string, k: number): void;
   root: THREE.Group;
   update(dt: number, time: number, castT: number): void;
   dispose(): void;
@@ -175,6 +249,16 @@ export interface ViewModel {
 export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
   const root = new THREE.Group();
   const disposables: (THREE.BufferGeometry | THREE.Material)[] = [];
+
+  // Hai đèn gắn thẳng vào camera — port từ zoro/src/engine/firstPersonRig.ts
+  // (fpLight '#e0f2fe' 1.45, fpWarmLight '#fde68a' 0.65). Không có hai đèn này
+  // thì kim loại của kiếm/tsuba và da tay bị bết, mất độ "sắc".
+  const fpLight = new THREE.PointLight('#e0f2fe', 1.45, 3.2);
+  fpLight.position.set(0, 0.35, 0.15);
+  root.add(fpLight);
+  const fpWarm = new THREE.PointLight('#fde68a', 0.65, 2.2);
+  fpWarm.position.set(0.2, -0.1, 0.3);
+  root.add(fpWarm);
   const track = <T extends THREE.BufferGeometry | THREE.Material>(x: T): T => {
     disposables.push(x);
     return x;
@@ -182,6 +266,7 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
 
   let idle: (dt: number, time: number) => void = () => {};
   let cast: (k: number) => void = () => {};
+  let special: ((moveId: string, k: number) => void) | undefined;
 
   switch (charId) {
     /* ------------------------------------------------ BOA HANCOCK */
@@ -342,19 +427,30 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
 
     /* ------------------------------------------------ LUFFY */
     case 'luffy': {
-      // cánh tay cao su: ống co giãn
+      // Cánh tay cao su dựng bằng ống động — port từ luffy/src/game/arm.ts
       const skinMat = track(new THREE.MeshStandardMaterial({
-        color: 0xf0b58a, roughness: 0.7, metalness: 0.0,
+        color: 0xf0b58a, roughness: 0.62, metalness: 0.0,
       }));
-      const tube = new THREE.Mesh(track(new THREE.CylinderGeometry(0.055, 0.07, 0.4, 12)), skinMat);
-      tube.position.set(0.3, -0.32, -0.48);
-      tube.rotation.set(0.55, 0.1, -0.5);
-      root.add(tube);
+      const tube = buildTube(16, 12);
+      const arm = new THREE.Mesh(tube.geo, skinMat);
+      arm.frustumCulled = false;
+      root.add(arm);
 
-      const fist = new THREE.Mesh(track(new THREE.SphereGeometry(0.085, 14, 12)), skinMat);
-      fist.position.set(0.34, -0.13, -0.6);
-      fist.scale.set(1, 0.85, 1);
-      root.add(fist);
+      // nắm đấm: các đốt ngón rời như bản gốc, không phải một khối cầu
+      const hand = new THREE.Group();
+      hand.position.set(0.34, -0.13, -0.6);
+      const palm = new THREE.Mesh(track(new THREE.SphereGeometry(0.075, 16, 12)), skinMat);
+      palm.scale.set(1.15, 0.8, 1);
+      hand.add(palm);
+      for (let i = 0; i < 4; i++) {
+        const knuckle = new THREE.Mesh(track(new THREE.SphereGeometry(0.026, 10, 8)), skinMat);
+        knuckle.position.set(-0.045 + i * 0.03, 0.03, -0.03);
+        hand.add(knuckle);
+      }
+      const thumb = new THREE.Mesh(track(new THREE.SphereGeometry(0.028, 10, 8)), skinMat);
+      thumb.position.set(0.07, -0.01, 0.01);
+      hand.add(thumb);
+      root.add(hand);
 
       // cổ tay áo đỏ
       const cuff = new THREE.Mesh(
@@ -362,18 +458,45 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
         track(new THREE.MeshStandardMaterial({ color: 0xd93a2b, roughness: 0.85 })),
       );
       cuff.position.set(0.3, -0.26, -0.5);
-      cuff.rotation.copy(tube.rotation);
+      cuff.rotation.copy(new THREE.Euler(0.55, 0.1, -0.5));
       root.add(cuff);
 
+      const shoulder = new THREE.Vector3(0.3, -0.34, -0.42);
+      // tham số co giãn, chép từ ArmRig: thick / thinK / bulge
+      let stretch = 0;
+      let bulge = 0;
+
       idle = (_dt, time) => {
-        fist.position.y = -0.13 + Math.sin(time * 1.5) * 0.012;
-        fist.rotation.z = Math.sin(time * 1.1) * 0.08;
+        hand.position.y = -0.13 + Math.sin(time * 1.5) * 0.012;
+        hand.rotation.z = Math.sin(time * 1.1) * 0.08;
+        // nghỉ: ống ngắn, dày như bản gốc restLen 0.8
+        tube.update(
+          shoulder,
+          hand.position.clone(),
+          0.072 - bulge * 0.01,
+          0.062,
+          bulge * 0.06,
+        );
       };
       cast = (k) => {
         const punch = Math.sin(k * Math.PI);
-        fist.position.z = -0.6 - punch * 0.55;
-        fist.position.y = -0.13 + punch * 0.08;
-        fist.scale.setScalar(1 + punch * 0.5);
+        // duỗi dài: tay vươn ra, bán kính giảm dần (thinK) — chép từ ArmRig
+        stretch = punch;
+        bulge = punch;
+        hand.position.z = -0.6 - punch * 0.85;
+        hand.position.y = -0.13 + punch * 0.08;
+        hand.position.x = 0.34 - punch * 0.04;
+        hand.scale.setScalar(1 + punch * 0.45);
+        // ống dài ra và mảnh đi khi căng
+        tube.update(
+          shoulder,
+          hand.position.clone().add(new THREE.Vector3(0, 0.01, 0.06)),
+          0.072 * (1 - stretch * 0.35),
+          0.05 * (1 - stretch * 0.2),
+          bulge * 0.08,
+        );
+        cuff.position.copy(shoulder).lerp(hand.position, 0.55);
+        cuff.rotation.set(0.55 + punch * 0.2, 0.1, -0.5);
       };
       break;
     }
@@ -397,11 +520,42 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
       mKat.rotation.set(-1.02, 0.06, 0.06);
       root.add(mKat);
 
+      // Hamon — đường sóng luyện kim trên lưỡi, đặc trưng katana Nhật.
+      // Bản gốc vẽ texture canvas riêng cho từng kiếm; ở đây dựng bằng hình
+      // học mảnh để giữ được hiệu ứng mà không cần texture.
+      const hamonMat = track(new THREE.MeshBasicMaterial({
+        color: 0xdff3ff, transparent: true, opacity: 0.55,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      const hamons: THREE.Mesh[] = [];
+      for (const kat of [rKat, lKat, mKat]) {
+        for (let i = 0; i < 5; i++) {
+          const w = new THREE.Mesh(track(new THREE.PlaneGeometry(0.012, 0.03)), hamonMat);
+          w.position.set(0.008 * (i % 2 ? 1 : -1), 0.1 + i * 0.06, 0.006);
+          kat.add(w);
+          hamons.push(w);
+        }
+      }
+
       idle = (_dt, time) => {
         const sway = Math.sin(time * 1.25) * 0.012;
         rKat.position.y = -0.34 + sway;
         lKat.position.y = -0.36 + sway * 0.8;
         mKat.position.y = -0.5 + sway * 0.6;
+        // hamon lấp lánh nhẹ — như phản chiếu ánh sáng trên lưỡi
+        hamonMat.opacity = 0.4 + Math.abs(Math.sin(time * 2.2)) * 0.3;
+        // lưỡi ma rung nhẹ như bản gốc (flutter = sin(t*9 + i*1.3) * 0.025)
+        if (ashuraFan > 0.03) {
+          for (let i = 0; i < ashuraBlades.length; i++) {
+            const g = ashuraBlades[i];
+            const base = g.userData.base as { y: number; rz: number } | undefined;
+            if (!base) continue;
+            const f = Math.sin(time * 9 + i * 1.3) * 0.025;
+            // cộng từ vị trí gốc, KHÔNG cộng dồn — tránh trôi dần theo thời gian
+            g.position.y = base.y + f;
+            g.rotation.z = base.rz + f;
+          }
+        }
       };
       cast = (k) => {
         const swing = Math.sin(k * Math.PI);
@@ -409,6 +563,57 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
         lKat.rotation.z = -0.44 + swing * 1.4;
         rKat.rotation.x = -0.72 - swing * 0.35;
         lKat.rotation.x = -0.78 - swing * 0.3;
+        // Santoryu: kiếm ngậm miệng cũng chém theo, cùng nhịp
+        mKat.rotation.x = -1.02 - swing * 0.5;
+        mKat.rotation.y = 0.06 + swing * 0.25;
+        // xoay cổ tay tạo đường chém chéo
+        rKat.rotation.y = -0.25 + swing * 0.55;
+        lKat.rotation.y = 0.3 - swing * 0.5;
+      };
+
+      /* ---- KYUTORYU: ASHURA — 6 lưỡi kiếm quỷ toả ra hai bên ---- */
+      // Port từ zoro/src/engine/firstPersonRig.ts L700-712 + L874-895:
+      // 6 thanh katana ma (3 trái, 3 phải) xếp thành quạt, mỗi thanh lệch
+      // nhau idx = 0 cao / 1 giữa / 2 thấp. Gốc cho chúng ẩn cho tới khi
+      // `ashuraFan` > 0.03 rồi mở rộng quạt theo giá trị đó.
+      const ashuraBlades: THREE.Group[] = [];
+      const ashuraMat = track(new THREE.MeshBasicMaterial({
+        color: 0xbe123c, transparent: true, opacity: 0.55,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      }));
+      for (let i = 0; i < 6; i++) {
+        const g = new THREE.Group();
+        const blade = new THREE.Mesh(track(new THREE.PlaneGeometry(0.05, 1.0)), ashuraMat);
+        blade.position.y = 0.5;
+        g.add(blade);
+        g.visible = false;
+        root.add(g);
+        ashuraBlades.push(g);
+      }
+
+      let ashuraFan = 0;
+      special = (moveId, k) => {
+        // chỉ đòn Ashura mới hiện 6 lưỡi ma
+        const on = moveId === 'ashura_bakkei' ? Math.min(1, k * 2.2) : 0;
+        ashuraFan = on;
+        const spread = 0.25 + (1.0 - 0.25) * ashuraFan; // lerp(0.25, 1.0, fan)
+        for (let i = 0; i < ashuraBlades.length; i++) {
+          const g = ashuraBlades[i];
+          g.visible = ashuraFan > 0.03;
+          if (!g.visible) continue;
+          const isLeft = i < 3;
+          const idx = i % 3;
+          const sign = isLeft ? -1 : 1;
+          g.position.set(
+            sign * (0.56 + idx * 0.16) * spread,
+            (0.18 - idx * 0.24) * spread,
+            -0.78 - idx * 0.06,
+          );
+          const rz = sign * (0.38 + idx * 0.36) * spread;
+          g.rotation.set(-0.55 - idx * 0.12, sign * (0.22 + idx * 0.12), rz);
+          g.userData.base = { y: g.position.y, rz };
+        }
+        ashuraMat.opacity = 0.35 + ashuraFan * 0.35;
       };
       break;
     }
@@ -416,6 +621,7 @@ export function buildViewModel(charId: CharId, colorHex: string): ViewModel {
 
   return {
     root,
+    special,
     update(dt, time, castT) {
       idle(dt, time);
       if (castT > 0) cast(castT);

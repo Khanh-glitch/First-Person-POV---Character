@@ -8,9 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "check": "tsx scripts/balance-check.ts",
+    "check": "tsx scripts/balance-check.ts && tsx scripts/fidelity-check.ts",
     "solve": "tsx scripts/solve-balance.ts",
-    "solve:matchup": "tsx scripts/solve-matchup.ts"
+    "solve:matchup": "tsx scripts/solve-matchup.ts",
+    "fidelity": "tsx scripts/fidelity-check.ts"
   },
   "dependencies": {
     "@types/three": "^0.187.0",
@@ -27,6 +28,7 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.1",
     "tailwindcss": "4.1.17",
+    "tsx": "^4.20.3",
     "typescript": "5.9.3",
     "vite": "7.3.7",
     "vite-plugin-singlefile": "2.3.0"

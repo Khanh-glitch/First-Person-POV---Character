@@ -195,7 +195,11 @@ cd arena
 npm run check
 ```
 
-Bài kiểm chứng có 5 nhóm:
+Bài kiểm chứng gồm **2 phần**: cân bằng (`balance-check.ts`, 5 nhóm dưới
+đây) và độ trung thực của port (`fidelity-check.ts`, 47 mục — đối chiếu
+trực tiếp với mã nguồn gốc).
+
+### Phần A — cân bằng (5 nhóm)
 
 | # | Nhóm | Ngưỡng | Bắt buộc |
 |---|---|---|---|
@@ -205,6 +209,23 @@ Bài kiểm chứng có 5 nhóm:
 | 4a | Mọi cặp trong 25–75% | lệch ≤ 25 điểm | ⚠ cảnh báo |
 | 4b | Tỉ lệ thắng tổng thể | trải ≤ 60 điểm | ✓ |
 | 5 | Chênh lệch DPS liên tục | ≤ 1.8× | ✓ |
+
+### Phần B — độ trung thực
+
+`scripts/fidelity-check.ts` mở `characters/*/` và so từng tham số với
+`arena/src/engine/{post,textures,particles,viewmodel}.ts`:
+
+| # | Trục | Số mục |
+|---|---|---|
+| 1 | Bloom radius/threshold so với bản gốc | 7 |
+| 2 | Uniform của shader hậu kỳ | 75 |
+| 3 | Texture hạt riêng cho từng nhân vật | 7 |
+| 4 | Profile emit (count/size/life/speed/gravity/drag) | 7 |
+| 5 | Rig POV + đèn FP + Ashura | 10 |
+| 6 | FOV / exposure | 7 |
+
+Mục 1 đọc bằng bộ tách ngoặc cân bằng chứ không regex, vì tham số đầu của
+`UnrealBloomPass` là `new Vector2(w, h)` có dấu phẩy bên trong.
 
 Nhóm 4a chỉ là **cảnh báo**: nó đo hành vi bot, mà bot không chơi giỏi
 như người thật (bot luôn chọn chiêu theo một quy tắc cố định, người thật
@@ -261,6 +282,29 @@ Hướng khắc phục nếu muốn đi tiếp:
    *tiềm năng* (DPS), và tiềm năng đã cân tuyệt đối (1.00×).
 
 Đấu trường hiện chọn hướng 3 và ghi rõ giới hạn này thay vì che đi.
+
+### 8.1 Bảng độ trung thực (đã port)
+
+Kiểm bằng `npm run fidelity` — script đọc thẳng mã nguồn gốc trong
+`characters/` rồi so với arena, nên con số không thể tự khai.
+
+| Lớp | Nguồn gốc | Đã port | Ghi chú |
+|---|---|---|---|
+| Hậu kỳ | 7 pipeline, mỗi dự án một bộ | **đủ 7** | Bloom radius/threshold khớp từng số; 75/75 uniform |
+| Hình dạng hạt | 7 bộ texture canvas | **đủ 7** | tim / sắt vụn / chỉ / hư vô / ánh sáng / cao su / lưỡi |
+| Tham số emit | count/size/life/speed/gravity/drag | **đủ 7** | chép từ hàm emit của từng dự án |
+| Rig POV | 7 rig riêng | **đủ 7** | tay, kiếm, quả cầu, ống co giãn |
+| Camera | FOV + exposure | **đủ 7** | 65–72°, 0.42–1.12 |
+| Ánh sáng FP | `firstPersonRig.fpLight` | **có** | 2 PointLight gắn camera |
+| Ashura | 6 lưỡi kiếm quỷ | **có** | port nguyên công thức quạt |
+
+Còn thiếu (cố ý, không phải bỏ sót):
+
+- **RibbonTrail** của Zoro — cần `THREE.Mesh` cập nhật theo lịch sử vị trí
+  trong không gian thế giới; rig hiện gắn vào camera nên phải tách sang
+  hệ toạ độ thế giới. Hiệu ứng chém đã có `SlashSystem` thay thế.
+- **Bandana** và **biến đổi khuôn mặt** của Zoro — không cần cho POV.
+- Âm thanh: cả 7 dự án gốc đều không có, nên arena cũng không.
 
 ---
 
