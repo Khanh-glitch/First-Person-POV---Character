@@ -220,13 +220,13 @@ export function dpsInContext(c: Character, K?: number, T = 200): number {
  * Đừng sửa tay: chạy lại script giải nếu dữ liệu chiêu thay đổi.
  */
 let SOLVED_K: Partial<Record<CharId, number>> = {
-  'boa-hancock': 1.2465,
-  'captain-kid': 0.9721,
-  'doflamingo': 0.81184,
-  'imu': 0.97068,
-  'kizaru': 1.03027,
-  'luffy': 0.99087,
-  'zoro': 1.02585,
+  'boa-hancock': 12.4650,
+  'captain-kid': 9.7210,
+  'doflamingo': 8.1184,
+  'imu': 9.7068,
+  'kizaru': 10.3027,
+  'luffy': 9.9087,
+  'zoro': 10.2585,
 };
 
 /**
